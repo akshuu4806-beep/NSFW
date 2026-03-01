@@ -628,8 +628,6 @@ async def master_scanner(client, message):
                 current_key_index = (current_key_index + 1) % len(SIGHTENGINE_KEYS)
         except Exception: pass
 
-app = Client("nsfw_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-
 # ================= EXECUTION =================
 if __name__ == "__main__":
     print(f"🤖 Starting {BOT_DISPLAY_NAME}...")
