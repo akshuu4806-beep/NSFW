@@ -1,11 +1,23 @@
 import os
 import time
 import asyncio
+import sys
 import requests
 import json
+
+# ----- FIX for Python 3.14 event loop issue -----
+if sys.version_info >= (3, 10):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+# ------------------------------------------------
+
 from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from motor.motor_asyncio import AsyncIOMotorClient
+
+# ... rest of your code ...
 
 # 🟢 Keep Alive Import
 from keep_alive import keep_alive
