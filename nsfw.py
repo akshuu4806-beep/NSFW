@@ -229,24 +229,6 @@ async def help_logic(client, message):
     else:
         await message.edit_text(help_text, reply_markup=HELP_PRIVATE_BUTTONS)
 
-# ================= CALLBACK HANDLERS =================
-
-@app.on_callback_query()
-async def callback_handler(client, query: CallbackQuery):
-    if query.data == "help_back":
-        await help_logic(client, query.message)
-        
-    elif query.data == "start_back":
-        text = (
-            f"👋 **Hello!**\n\n"
-            "Main ek **Advanced NSFW aur Abuse Filter** bot hoon.\n"
-            "Mujhe use karne ke liye niche diye buttons ka use karein."
-        )
-        await query.message.edit_text(text, reply_markup=START_PRIVATE_BUTTONS)
-        
-    elif query.data == "close_status":
-        await query.message.delete()
-
 @app.on_message(filters.command("status"))
 async def status_cmd(client, message):
     global cached_start_time
@@ -282,11 +264,6 @@ async def status_cmd(client, message):
     reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🗑️ Delete Status", callback_data="del_status")]])
     await message.reply_text(status_text, reply_markup=reply_markup)
     
-
-@app.on_callback_query(filters.regex("del_status"))
-async def del_status_callback(client, callback_query: CallbackQuery):
-    await callback_query.message.delete()
-
 # --- SUDO MANAGEMENT COMMANDS (Sirf Owner) ---
 @app.on_message(filters.command("addsudo"))
 async def add_sudo_cmd(client, message):
@@ -376,30 +353,39 @@ async def broadcast_handler(client, message):
     await status.edit_text(f"📢 Sent to `{count}` chats.")
 
 @app.on_message(filters.command(["nsfw", "getlink", "unpin", "gmsg"]) & filters.user(OWNER_ID))
-async def sn_tools(client, message):
+async def owner_tools(client, message):
+    cmd = message.command[0].lower()
+    
+    # NSFW toggle - kisi bhi group mein (current group)
+    if cmd == "nsfw" and message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
+        args = message.command[1:]
+        if not args or args[0].lower() not in ["on", "off"]:
+            return await message.reply_text("❗ Usage: `/nsfw on` or `/nsfw off` (is group mein)")
+        new_status = args[0].lower() == "on"
+        await set_nsfw_status(message.chat.id, new_status)
+        return await message.reply_text(f"✅ NSFW filter in **{message.chat.title}** is now **{'ON' if new_status else 'OFF'}**")
+    
+    # Baaki commands (getlink, unpin, gmsg) pehle jaise the...
+    # (Serial Number wala logic same rakho)
     args = message.command
     if len(args) < 2: return
-    
-    cmd = args[0].lower()
     sn = int(args[1]) if args[1].isdigit() else None
     chat_id = temp_group_list.get(sn) if sn else None
-
-    if not chat_id and args[1].lower() != "all":
+    if not chat_id:
         return await message.reply_text("❌ SN not found. Pehle /grouplist chalao.")
-
-    try:
-        if cmd == "nsfw":
-            status = args[2].lower() == "on"
-            await set_nsfw_status(chat_id, status)
-            await message.reply_text(f"✅ Group {sn} NSFW: {status}")
-        elif cmd == "getlink":
-            link = await client.export_chat_invite_link(chat_id)
-            await message.reply_text(f"🔗 Link: {link}")
-        elif cmd == "unpin":
-            await client.unpin_all_chat_messages(chat_id)
-            await message.reply_text(f"✅ Unpinned group {sn}")
-    except Exception as e: await message.reply_text(f"❌ Error: {e}")
-
+    
+    if cmd == "getlink":
+        link = await client.export_chat_invite_link(chat_id)
+        await message.reply_text(f"🔗 Link: {link}")
+    elif cmd == "unpin":
+        await client.unpin_all_chat_messages(chat_id)
+        await message.reply_text(f"✅ Unpinned group {sn}")
+    elif cmd == "gmsg":
+        if len(args) < 3: return
+        text = " ".join(args[2:])
+        await client.send_message(chat_id, text)
+        await message.reply_text("✅ Message sent.")
+        
 @app.on_message(filters.command("getlink") & filters.user(OWNER_ID))
 async def getlink_cmd(client, message):
     if len(message.command) < 2: return await message.reply_text("❗ S.No batayein.")
@@ -543,6 +529,28 @@ async def list_word_cmd(client, message):
     await message.reply_text("📝 **Blocked Words:**\n" + "\n".join(f"• `{w}`" for w in words))
 
 
+# ================= CALLBACK HANDLERS =================
+
+@app.on_callback_query()
+async def callback_handler(client, query: CallbackQuery):
+    if query.data == "help_back":
+        await help_logic(client, query.message)
+        
+    elif query.data == "start_back":
+        text = (
+            f"👋 **Hello!**\n\n"
+            "Main ek **Advanced NSFW aur Abuse Filter** bot hoon.\n"
+            "Mujhe use karne ke liye niche diye buttons ka use karein."
+        )
+        await query.message.edit_text(text, reply_markup=START_PRIVATE_BUTTONS)
+        
+    elif query.data == "close_status":
+        await query.message.delete()
+
+@app.on_callback_query(filters.regex("del_status"))
+async def del_status_callback(client, callback_query: CallbackQuery):
+    await callback_query.message.delete()
+    
 # ================= MASTER SCANNER (Updated with Permission Checks) =================
 
 @app.on_message((filters.text | filters.photo | filters.sticker | filters.video | filters.animation | filters.document) & ~filters.service)
