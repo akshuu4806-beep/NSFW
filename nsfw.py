@@ -19,8 +19,6 @@ from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from motor.motor_asyncio import AsyncIOMotorClient
 
-# ... rest of your code ...
-
 # 🟢 Keep Alive Import
 from keep_alive import keep_alive
 
@@ -45,8 +43,6 @@ except Exception as e:
     print(f"❌ Error loading SIGHTENGINE_KEYS: {e}")
     SIGHTENGINE_KEYS = []
     
-# Sightengine Keys as JSON String: [{"user":"u1","secret":"s1"},{"user":"u2","secret":"s2"}]
-
 current_key_index = 0
 start_time = time.time()
 temp_group_list = {}
@@ -145,20 +141,9 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
-# Load persistent start time when bot starts (without decorator)
-async def load_start_time():
-    global cached_start_time
-    cached_start_time = await get_or_create_start_time()
-    print(f"✅ Bot first started on: {time.ctime(cached_start_time)}")
-
-# Schedule the startup task to run in background
-#asyncio.get_event_loop().create_task(load_start_time())
-
-
-
 # ================= COMMANDS =================
 
-# ================= BUTTONS CONFIGURATION (No Support) =================
+# ================= BUTTONS CONFIGURATION =================
 
 # 1. Private /start buttons
 START_PRIVATE_BUTTONS = InlineKeyboardMarkup([
@@ -463,7 +448,7 @@ async def list_pack_cmd(client, message):
         return await message.reply_text("🚫 Only For Global Admins .")
     packs = await get_blocked_packs()
     if not packs:
-        return await message.reply_text("📭 There is no any bloced stickerpack.")
+        return await message.reply_text("📭 There is no any blocked stickerpack.")
     await message.reply_text("📝 **Blocked Sticker Packs:**\n" + "\n".join(f"• `{p}`" for p in packs))
 
 # --- STICKER COMMANDS (Sudo Only) ---
@@ -532,7 +517,6 @@ async def list_word_cmd(client, message):
 
 
 # ================= CALLBACK HANDLERS =================
-# ✅ PEHLE yeh (specific)
 @app.on_callback_query(filters.regex("^del_status$"))
 async def del_status_callback(client, callback_query: CallbackQuery):
     try:
@@ -557,58 +541,48 @@ async def callback_handler(client, query: CallbackQuery):
         await query.message.delete()
 
 
-# ================= MASTER SCANNER (Updated with Permission Checks) =================
+# ================= MASTER SCANNER (with command skip) =================
 
 @app.on_message((filters.text | filters.photo | filters.sticker | filters.video | filters.animation | filters.document) & ~filters.service)
 async def master_scanner(client, message):
     global current_key_index
     if not message.from_user: return
     
-    # 🛑 1. DM PROTECTION: Agar DM (Private Chat) hai toh bot kuch dlt nahi karega
+    # 🔥 IMPORTANT: Agar message command hai to scan mat karo
+    if message.text and message.text.startswith("/"):
+        return
+    
+    # 🛑 1. DM PROTECTION: Agar DM (Private Chat) hai toh bot kuch delete nahi karega
     if message.chat.type == enums.ChatType.PRIVATE:
         return
 
-    # 🛑 2. ADMIN & PERMISSION CHECK: 
-    # Bot group mein admin hai ya nahi, aur delete permission hai ya nahi?
+    # 🛑 2. ADMIN & PERMISSION CHECK
     try:
         self_member = await client.get_chat_member(message.chat.id, "me")
-        
-        # Agar bot admin nahi hai, toh bilkul silent rahega
         if self_member.status not in [enums.ChatMemberStatus.ADMINISTRATOR, enums.ChatMemberStatus.OWNER]:
             return 
-            
-        # Agar admin hai par delete permission nahi hai
         if not self_member.privileges.can_delete_messages:
-            # Ye message 1 baar hi dikhega jab bot scan karne ki koshish karega
             await message.reply_text("❗ I have no 'Delete Messages' permission to perform moderation.")
             return
-
     except Exception as e:
         print(f"Error checking bot permissions: {e}")
         return
 
-    # --- Yahan se purana scanning logic shuru hoga ---
-    
     # 3. Total Scans Counter
     await update_stat("total_scans") 
 
     # 🌍 Global & Local Toggle Check
-    is_global_nsfw_on = await get_global_nsfw()
-    if not is_global_nsfw_on: return
+    if not await get_global_nsfw(): return
+    if not await get_nsfw_status(message.chat.id): return
 
-    is_nsfw_on = await get_nsfw_status(message.chat.id)
-    if not is_nsfw_on: return
-
-    # Admin silent tags report ke liye
     admin_tags = await get_silent_admin_tags(client, message.chat.id)
     text_to_check = message.text or message.caption or ""
 
     # 🛑 Step 4: Abuse Word Check
-    if text_to_check and not text_to_check.startswith("/"):
+    if text_to_check:
         text_lower = text_to_check.lower()
         blocked_words = await get_blocked_words()
         found_word = next((w for w in blocked_words if w in text_lower), None)
-        
         if found_word:
             try:
                 await message.delete()
@@ -638,10 +612,7 @@ async def master_scanner(client, message):
             except Exception: pass
             return 
 
-    # 🛑 Step 6: AI Media Check (Photo/Video/GIF)
-    # [Aapka Sightengine wala logic yahan continue rahega...]
-
-    # 🛑 Step 6: AI Media Check (Universal)
+    # 🛑 Step 6: AI Media Check (Photo/Video/GIF/Document)
     file_id = None
     if message.photo: file_id = message.photo.file_id 
     elif message.sticker: file_id = message.sticker.thumbs[0].file_id if message.sticker.thumbs else message.sticker.file_id
@@ -653,9 +624,8 @@ async def master_scanner(client, message):
     if file_id:
         try:
             if not SIGHTENGINE_KEYS:
-                return  # No keys configured, skip
+                return
         
-            global current_key_index
             key = SIGHTENGINE_KEYS[current_key_index % len(SIGHTENGINE_KEYS)]
         
             api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id}"
@@ -686,25 +656,26 @@ async def master_scanner(client, message):
         except Exception as e:
             print(f"Sightengine error: {e}")
             pass
-        
-# ================= EXECUTION =================
+
+
+# ================= EXECUTION (FIXED) =================
 if __name__ == "__main__":
     print(f"🤖 Starting {BOT_DISPLAY_NAME}...")
     keep_alive()
     print("✨ Health check server is running. Starting bot polling...")
     
-    # Load start time before running (synchronous, but we can do it inside async)
-    async def init():
+    # Load start time synchronously before app.run()
+    # because app.run() is blocking and we can't easily run async inside it.
+    # Use a temporary event loop to load start time.
+    async def load_start_time():
         global cached_start_time
         cached_start_time = await get_or_create_start_time()
         print(f"✅ Uptime loaded: {time.ctime(cached_start_time)}")
     
-    # Run init in a temporary loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(init())
+    loop.run_until_complete(load_start_time())
     loop.close()
     
-    # Now start bot normally
-    app.run()   # <--- This is the key
-    
+    # Finally start the bot with standard method
+    app.run()   # <- This ensures commands are received and processed
