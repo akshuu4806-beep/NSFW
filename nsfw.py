@@ -6,11 +6,13 @@ import requests
 import json
 
 # ----- FIX for Python 3.14 event loop issue -----
-#if sys.version_info >= (3, 10):
-    #try:
-        #asyncio.get_running_loop()
-    #except RuntimeError:
-        #asyncio.set_event_loop(asyncio.new_event_loop())
+try:
+    loop = asyncio.get_event_loop()
+    if loop.is_closed():
+        raise RuntimeError
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 # ------------------------------------------------
 
 from pyrogram import Client, filters, enums
