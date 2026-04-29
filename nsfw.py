@@ -236,12 +236,9 @@ async def status_cmd(client, message):
         cached_start_time = await get_or_create_start_time()
     
     uptime_seconds = int(time.time() - cached_start_time)
-    
-    # Convert to hours (with 1 decimal place)
     hours = uptime_seconds / 3600
     hours_rounded = round(hours, 1)
     
-    # Alternative: also show days if > 24 hours
     if hours >= 24:
         days = int(hours // 24)
         rem_hours = hours % 24
@@ -250,7 +247,11 @@ async def status_cmd(client, message):
         uptime_str = f"{hours_rounded} hours"
     
     stats = await get_stats()
-    groups_count = await client.get_dialogs_count()
+    
+    # ✅ FIX: manually count groups
+    groups_count = 0
+    async for _ in client.get_dialogs():
+        groups_count += 1
     
     status_text = (
         "📊 **Bot Operational Status**\n\n"
@@ -386,28 +387,6 @@ async def owner_tools(client, message):
         await client.send_message(chat_id, text)
         await message.reply_text("✅ Message sent.")
         
-@app.on_message(filters.command("getlink") & filters.user(OWNER_ID))
-async def getlink_cmd(client, message):
-    if len(message.command) < 2: return await message.reply_text("❗ S.No batayein.")
-    sn = int(message.command[1])
-    chat_id = temp_group_list.get(sn)
-    if not chat_id: return await message.reply_text("❌ Galat Serial Number.")
-    try:
-        link = await client.export_chat_invite_link(chat_id)
-        await message.reply_text(f"🔗 Link: {link}")
-    except Exception as e: await message.reply_text(f"❌ Error: {e}")
-
-@app.on_message(filters.command("gmsg") & filters.user(OWNER_ID))
-async def gmsg_cmd(client, message):
-    if len(message.command) < 3: return await message.reply_text("❗ Usage: `/gmsg <S.No> <text>`")
-    sn = int(message.command[1])
-    text = " ".join(message.command[2:])
-    chat_id = temp_group_list.get(sn)
-    if chat_id:
-        await client.send_message(chat_id, text)
-        await message.reply_text("✅ Message bhej diya gaya.")
-    else: await message.reply_text("❌ Serial Number list mein nahi hai.")
-
 # --- NSFW TOGGLE COMMAND (Group Admins & Owner) ---
 @app.on_message(filters.command("nsfw") & filters.group)
 async def nsfw_toggle_cmd(client, message):
