@@ -43,6 +43,23 @@ mongo_db = db_client["nsfw_bot_database"]
 settings_col = mongo_db["settings"]
 stats_col = mongo_db["stats"]
 
+# Persistent start time for uptime (store in DB)
+async def get_or_create_start_time():
+    """Returns bot's first start timestamp from DB, never resets on restart"""
+    doc = await settings_col.find_one({"_id": "bot_start_time"})
+    if doc and "start_time" in doc:
+        return doc["start_time"]
+    # First time bot ever runs
+    now = time.time()
+    await settings_col.update_one(
+        {"_id": "bot_start_time"},
+        {"$set": {"start_time": now}},
+        upsert=True
+    )
+    return now
+
+# Global variable to cache the start time (avoid DB read every time)
+cached_start_time = None
 
 async def update_stat(field):
     await stats_col.update_one({"_id": "bot_stats"}, {"$inc": {field: 1}}, upsert=True)
@@ -114,6 +131,12 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
+@app.on_startup()
+async def load_start_time(client):
+    global cached_start_time
+    cached_start_time = await get_or_create_start_time()
+    print(f"✅ Bot first started on: {time.ctime(cached_start_time)}")
+    
 # ================= COMMANDS =================
 
 # ================= BUTTONS CONFIGURATION (No Support) =================
@@ -211,27 +234,39 @@ async def callback_handler(client, query: CallbackQuery):
 
 @app.on_message(filters.command("status"))
 async def status_cmd(client, message):
-    # Uptime calculation
-    uptime_sec = int(time.time() - start_time)
-    h = uptime_sec // 3600
-    m = (uptime_sec % 3600) // 60
-    s = uptime_sec % 60
+    global cached_start_time
+    if cached_start_time is None:
+        cached_start_time = await get_or_create_start_time()
+    
+    uptime_seconds = int(time.time() - cached_start_time)
+    
+    # Convert to hours (with 1 decimal place)
+    hours = uptime_seconds / 3600
+    hours_rounded = round(hours, 1)
+    
+    # Alternative: also show days if > 24 hours
+    if hours >= 24:
+        days = int(hours // 24)
+        rem_hours = hours % 24
+        uptime_str = f"{days} days, {rem_hours:.1f} hours"
+    else:
+        uptime_str = f"{hours_rounded} hours"
     
     stats = await get_stats()
     groups_count = await client.get_dialogs_count()
     
     status_text = (
         "📊 **Bot Operational Status**\n\n"
-        f"⏱️ **Uptime:** `{h}h {m}m {s}s`\n"
+        f"⏱️ **Total Uptime:** `{uptime_str}`\n"
         f"👥 **Monitored Groups:** `{groups_count}`\n"
         f"🔍 **Total Scans:** `{stats.get('total_scans', 0)}`\n"
         f"🚫 **NSFW Blocked:** `{stats.get('nsfw_blocked', 0)}`\n"
         f"🤬 **Abuse Blocked:** `{stats.get('abuse_blocked', 0)}`"
     )
     
-    # Delete button (Unlocked for all)
     reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🗑️ Delete Status", callback_data="del_status")]])
     await message.reply_text(status_text, reply_markup=reply_markup)
+    
 
 @app.on_callback_query(filters.regex("del_status"))
 async def del_status_callback(client, callback_query: CallbackQuery):
