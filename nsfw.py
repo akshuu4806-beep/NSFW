@@ -143,11 +143,14 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
-@app.on_startup()
-async def load_start_time(client):
+# Load persistent start time when bot starts (without decorator)
+async def load_start_time():
     global cached_start_time
     cached_start_time = await get_or_create_start_time()
     print(f"✅ Bot first started on: {time.ctime(cached_start_time)}")
+
+# Schedule the startup task to run in background
+asyncio.get_event_loop().create_task(load_start_time())
     
 # ================= COMMANDS =================
 
