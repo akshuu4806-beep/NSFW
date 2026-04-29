@@ -692,15 +692,19 @@ if __name__ == "__main__":
     print(f"🤖 Starting {BOT_DISPLAY_NAME}...")
     keep_alive()
     print("✨ Health check server is running. Starting bot polling...")
-
-    async def main():
+    
+    # Load start time before running (synchronous, but we can do it inside async)
+    async def init():
         global cached_start_time
-        async with app:
-            cached_start_time = await get_or_create_start_time()
-            print(f"✅ Uptime loaded: {time.ctime(cached_start_time)}")
-            await asyncio.get_event_loop().create_future()  # run forever
-
+        cached_start_time = await get_or_create_start_time()
+        print(f"✅ Uptime loaded: {time.ctime(cached_start_time)}")
+    
+    # Run init in a temporary loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(main())
+    loop.run_until_complete(init())
+    loop.close()
+    
+    # Now start bot normally
+    app.run()   # <--- This is the key
     
