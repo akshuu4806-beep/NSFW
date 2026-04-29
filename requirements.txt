@@ -1,6 +1,7 @@
 pyrogram
 tgcrypto
 motor
-dnspython
 requests
 flask
+pymongo
+python-dotenv
