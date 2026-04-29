@@ -634,6 +634,10 @@ if __name__ == "__main__":
     
     # 🟢 Server ko background mein start karein
     keep_alive() 
-    
+
+    print("✨ Health check server is running. Starting bot polling...")
+
+    # 🟢 Finally, start the bot
+    app.run()
     # Bot start karein
     app.run()
