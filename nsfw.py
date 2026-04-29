@@ -639,5 +639,4 @@ if __name__ == "__main__":
 
     # 🟢 Finally, start the bot
     app.run()
-    # Bot start karein
-    app.run()
+    
