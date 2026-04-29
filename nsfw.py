@@ -19,6 +19,18 @@ OWNER_ID = int(os.getenv("OWNER_ID"))
 BOT_DISPLAY_NAME = os.getenv("BOT_DISPLAY_NAME", "My NSFW Bot")
 BOT_USERNAME = os.getenv("BOT_USERNAME")
 
+# Sightengine Keys from Environment Variable (with safe fallback)
+SIGHTENGINE_KEYS = []
+try:
+    keys_str = os.getenv("SIGHTENGINE_KEYS", "[]")
+    SIGHTENGINE_KEYS = json.loads(keys_str)
+    if not isinstance(SIGHTENGINE_KEYS, list):
+        SIGHTENGINE_KEYS = []
+    print(f"✅ Loaded {len(SIGHTENGINE_KEYS)} Sightengine API keys")
+except Exception as e:
+    print(f"❌ Error loading SIGHTENGINE_KEYS: {e}")
+    SIGHTENGINE_KEYS = []
+    
 # Sightengine Keys as JSON String: [{"user":"u1","secret":"s1"},{"user":"u2","secret":"s2"}]
 
 current_key_index = 0
@@ -31,48 +43,6 @@ mongo_db = db_client["nsfw_bot_database"]
 settings_col = mongo_db["settings"]
 stats_col = mongo_db["stats"]
 
-# Helper functions for MongoDB
-
-# Collection for Sightengine keys (stored as a single document)
-sightengine_keys_col = mongo_db["sightengine_keys"]
-# Cached keys and index for performance (avoid DB call per message)
-_cached_keys = None
-_cached_keys_time = 0
-_cache_ttl = 300  # 5 seconds cache, adjust as needed
-
-async def get_sightengine_keys():
-    """Fetch keys from MongoDB with caching"""
-    global _cached_keys, _cached_keys_time
-    now = time.time()
-    if _cached_keys is not None and (now - _cached_keys_time) < _cache_ttl:
-        return _cached_keys
-    doc = await sightengine_keys_col.find_one({"_id": "sightengine_config"})
-    keys = doc.get("keys", []) if doc else []
-    # If no keys in DB, fallback to environment variable for backward compatibility
-    if not keys and os.getenv("SIGHTENGINE_KEYS"):
-        try:
-            keys = json.loads(os.getenv("SIGHTENGINE_KEYS"))
-            # Optionally save to DB for future use
-            await sightengine_keys_col.update_one(
-                {"_id": "sightengine_config"},
-                {"$set": {"keys": keys}},
-                upsert=True
-            )
-        except:
-            keys = []
-    _cached_keys = keys
-    _cached_keys_time = now
-    return keys
-
-async def update_sightengine_keys(keys_list):
-    """Update keys in MongoDB and clear cache"""
-    global _cached_keys
-    await sightengine_keys_col.update_one(
-        {"_id": "sightengine_config"},
-        {"$set": {"keys": keys_list}},
-        upsert=True
-    )
-    _cached_keys = keys_list
 
 async def update_stat(field):
     await stats_col.update_one({"_id": "bot_stats"}, {"$inc": {field: 1}}, upsert=True)
@@ -313,9 +283,6 @@ async def sudo_list_cmd(client, message):
         
     text = "👑 **Sudo Admins List:**\n" + "\n".join(f"• `{uid}`" for uid in sudos)
     await message.reply_text(text)
-
-# Temporary storage serial numbers ke liye
-temp_group_list = {}
 
 @app.on_message(filters.command("grouplist") & filters.user(OWNER_ID))
 async def grouplist_cmd(client, message):
@@ -620,45 +587,41 @@ async def master_scanner(client, message):
         file_id = message.document.file_id
 
     if file_id:
-    try:
-        # Fetch fresh keys (cached)
-        keys_list = await get_sightengine_keys()
-        if not keys_list:
-            return  # No keys available, skip scanning
-
-        # Use current index (rotated globally)
-        global current_key_index
-        key = keys_list[current_key_index % len(keys_list)]
-
-        # ... rest of API call as before ...
-        api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id}"
-        file_path = requests.get(api_url).json()["result"]["file_path"]
-        file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+        try:
+            if not SIGHTENGINE_KEYS:
+                return  # No keys configured, skip
         
-        r = requests.get("https://api.sightengine.com/1.0/check.json", params={
-            'url': file_url, 'models': 'nudity-2.0,wad,offensive,gore',
-            'api_user': key["user"], 'api_secret': key["secret"]
-        }).json()
-
-        if r.get('status') == 'success':
-            nude = r.get('nudity', {}).get('none', 1.0) < 0.5
-            gore = r.get('gore', {}).get('prob', 0.0) > 0.5
-            if nude or gore:
-                await message.delete()
-                await update_stat("nsfw_blocked")
-                warn_msg = await client.send_message(
-                    chat_id=message.chat.id,
-                    text=f"🚨 **NSFW Content Deleted** 🚨\n\n"
-                         f"👤 **User:** {message.from_user.mention}\n"
-                         f"⏱️ _Deleting in 5s..._{admin_tags}",
-                    parse_mode=enums.ParseMode.HTML
-                )
-                asyncio.create_task(delete_msg_later(client, message.chat.id, warn_msg.id))
-        elif 'limit' in str(r).lower():
-            current_key_index = (current_key_index + 1) % len(keys_list)  # Rotate
-    except Exception as e:
-        print(f"Sightengine error: {e}")
-        pass
+            global current_key_index
+            key = SIGHTENGINE_KEYS[current_key_index % len(SIGHTENGINE_KEYS)]
+        
+            api_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id}"
+            file_path = requests.get(api_url).json()["result"]["file_path"]
+            file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+        
+            r = requests.get("https://api.sightengine.com/1.0/check.json", params={
+                'url': file_url, 'models': 'nudity-2.0,wad,offensive,gore',
+                'api_user': key["user"], 'api_secret': key["secret"]
+            }).json()
+        
+            if r.get('status') == 'success':
+                nude = r.get('nudity', {}).get('none', 1.0) < 0.5
+                gore = r.get('gore', {}).get('prob', 0.0) > 0.5
+                if nude or gore:
+                    await message.delete()
+                    await update_stat("nsfw_blocked")
+                    warn_msg = await client.send_message(
+                        chat_id=message.chat.id,
+                        text=f"🚨 **NSFW Content Deleted** 🚨\n\n"
+                             f"👤 **User:** {message.from_user.mention}\n"
+                             f"⏱️ _Deleting in 5s..._{admin_tags}",
+                        parse_mode=enums.ParseMode.HTML
+                    )
+                    asyncio.create_task(delete_msg_later(client, message.chat.id, warn_msg.id))
+            elif 'limit' in str(r).lower():
+                current_key_index = (current_key_index + 1) % len(SIGHTENGINE_KEYS)
+        except Exception as e:
+            print(f"Sightengine error: {e}")
+            pass
         
 # ================= EXECUTION =================
 if __name__ == "__main__":
