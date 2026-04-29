@@ -3,23 +3,31 @@ import time
 import asyncio
 import json
 import requests
+from threading import Thread
+from flask import Flask, render_template_string
+
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
+# Telegram imports
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, MessageHandler,
     filters, ContextTypes
 )
+
+# MongoDB
 from motor.motor_asyncio import AsyncIOMotorClient
 
 # ================= CONFIG =================
-API_ID = int(os.getenv("API_ID"))          # PTB mein API_ID ki zaroorat nahi, but maybe for custom?
-API_HASH = os.getenv("API_HASH")           # Not directly used, but keep
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URL = os.getenv("MONGO_URL")
 OWNER_ID = int(os.getenv("OWNER_ID"))
 BOT_DISPLAY_NAME = os.getenv("BOT_DISPLAY_NAME", "My NSFW Bot")
 BOT_USERNAME = os.getenv("BOT_USERNAME")
 
-# Sightengine Keys
+# Sightengine Keys (optional)
 SIGHTENGINE_KEYS = []
 try:
     keys_str = os.getenv("SIGHTENGINE_KEYS", "[]")
@@ -31,9 +39,8 @@ except Exception as e:
     print(f"❌ Sightengine error: {e}")
 
 current_key_index = 0
-temp_group_list = {}
 
-# MongoDB
+# MongoDB setup
 db_client = AsyncIOMotorClient(MONGO_URL)
 mongo_db = db_client["nsfw_bot_database"]
 settings_col = mongo_db["settings"]
@@ -141,7 +148,7 @@ async def help_logic(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= COMMAND HANDLERS =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(context.args) > 0 and context.args[0] == "help":
+    if context.args and context.args[0] == "help":
         return await help_logic(update, context)
     if update.effective_chat.type == "private":
         text = f"👋 Hello {update.effective_user.first_name}!\nMain {BOT_DISPLAY_NAME} hoon.\n✨ AI-based NSFW + Abuse filter."
@@ -165,17 +172,8 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uptime = int(time.time() - cached_start_time)
     hours, minutes = uptime // 3600, (uptime % 3600) // 60
     stats = await get_stats()
-    groups = 0
-    async for dialog in context.bot.get_chat_updates(limit=100):  # not ideal, but PTB doesn't have get_dialogs similar; we need a workaround
-        # Actually PTB doesn't have direct get_dialogs, we need to iterate over updates? No.
-        # Better to use a different method: we can't get all groups easily. 
-        # Alternative: maintain a set of group ids in DB or use context.bot.get_chat_members_count? Not.
-        # For simplicity, we skip groups count or we can query from DB.
-        # I'll keep groups count as 0 and note that in status.
-        pass
-    # We can optionally store groups in DB when first message arrives, but that's extra.
-    # For now, groups count will be shown as 0.
-    text = (f"📊 **Status**\n⏱️ Uptime: {hours}h {minutes}m\n👥 Groups: (feature limited in PTB)\n"
+    # Group count not easily available in PTB; show 0
+    text = (f"📊 **Status**\n⏱️ Uptime: {hours}h {minutes}m\n👥 Groups: (N/A in PTB)\n"
             f"🔍 Scans: {stats['total_scans']}\n🚫 NSFW: {stats['nsfw_blocked']}\n🤬 Abuse: {stats['abuse_blocked']}")
     await update.message.reply_text(text, reply_markup=status_delete_button())
 
@@ -186,7 +184,7 @@ async def add_sudo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target = None
     if update.message.reply_to_message:
         target = update.message.reply_to_message.from_user.id
-    elif len(context.args) > 0 and context.args[0].isdigit():
+    elif context.args and context.args[0].isdigit():
         target = int(context.args[0])
     if not target:
         return await update.message.reply_text("❗ Usage: /addsudo <id> or reply.")
@@ -199,7 +197,7 @@ async def rm_sudo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target = None
     if update.message.reply_to_message:
         target = update.message.reply_to_message.from_user.id
-    elif len(context.args) > 0 and context.args[0].isdigit():
+    elif context.args and context.args[0].isdigit():
         target = int(context.args[0])
     if not target:
         return await update.message.reply_text("❗ Usage: /rmsudo <id> or reply.")
@@ -215,34 +213,7 @@ async def sudo_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "👑 Sudo Admins:\n" + "\n".join(f"• `{uid}`" for uid in sudos)
     await update.message.reply_text(text)
 
-# Owner tools
-async def grouplist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID:
-        return
-    global temp_group_list
-    temp_group_list = {}
-    text = "📋 Groups:\n"
-    i = 1
-    # PTB does not have get_dialogs. We can't list all groups without storing.
-    # Workaround: maintain groups when bot joins via MyChatMember handler.
-    # For simplicity, we skip this feature. User can use DB stored group ids if needed.
-    await update.message.reply_text("⚠️ PTB version doesn't support dynamic group listing. Use DB stored groups.")
-
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID:
-        return
-    if "unpin" in context.args:
-        # Cannot unpin all easily without group list
-        return await update.message.reply_text("⚠️ Unpin not implemented in PTB version.")
-    status_msg = await update.message.reply_text("Broadcasting...")
-    msg_to_copy = update.message.reply_to_message or update.message
-    # Need group ids list; we don't have. So skip.
-    await status_msg.edit_text("⚠️ Broadcast not implemented in PTB version due to lack of group listing.")
-
-async def sn_tools(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # getlink, gmsg, unpin based on S.No from grouplist - not feasible without group list.
-    await update.message.reply_text("⚠️ This feature requires group listing, not available in PTB version.")
-
+# NSFW toggle
 async def nsfw_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -262,6 +233,7 @@ async def nsfw_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await set_nsfw_status(chat_id, new)
     await update.message.reply_text(f"✅ NSFW filter {'ON' if new else 'OFF'}")
 
+# Sticker pack commands
 async def add_pack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_sudo(update.effective_user.id):
         return await update.message.reply_text("🚫 Sudo only.")
@@ -296,6 +268,7 @@ async def sticker_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("📭 No blocked packs.")
     await update.message.reply_text("\n".join(f"• {p}" for p in packs))
 
+# Abuse word commands
 async def add_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_sudo(update.effective_user.id):
         return await update.message.reply_text("🚫 Sudo only.")
@@ -326,7 +299,7 @@ async def word_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("📭 No blocked words.")
     await update.message.reply_text("\n".join(f"• {w}" for w in words))
 
-# ================= CALLBACK HANDLERS =================
+# Callback handlers
 async def del_status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -349,8 +322,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= MASTER SCANNER =================
 async def master_scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Skip commands
-    if update.message and update.message.text and update.message.text.startswith('/'):
+    if update.message.text and update.message.text.startswith('/'):
         return
     if not update.effective_user:
         return
@@ -391,7 +363,7 @@ async def master_scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
             asyncio.create_task(delete_msg_later(context, update.effective_chat.id, warn.message_id))
             return
 
-    # Sticker pack block
+    # Sticker pack check
     if update.message.sticker and update.message.sticker.set_name:
         packs = await get_blocked_packs()
         if update.message.sticker.set_name in packs:
@@ -404,11 +376,11 @@ async def master_scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
             asyncio.create_task(delete_msg_later(context, update.effective_chat.id, warn.message_id))
             return
 
-    # AI media check (Sightengine)
+    # Media check via Sightengine
     file_id = None
     if update.message.photo:
         file_id = update.message.photo[-1].file_id
-    elif update.message.video and update.message.video.file_id:
+    elif update.message.video:
         file_id = update.message.video.file_id
     elif update.message.animation:
         file_id = update.message.animation.file_id
@@ -444,38 +416,57 @@ async def master_scanner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"Sightengine error: {e}")
 
+# ================= FLASK KEEP ALIVE =================
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def home():
+    return "Bot is running!", 200
+
+@flask_app.route('/health')
+def health():
+    return "OK", 200
+
+def run_flask():
+    port = int(os.environ.get('PORT', 5000))
+    flask_app.run(host='0.0.0.0', port=port)
+
+def start_flask():
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+
 # ================= MAIN =================
 def main():
     global cached_start_time
-    # Create application
-    app = Application.builder().token(BOT_TOKEN).build()
+    # Start Flask keep-alive
+    start_flask()
+    print("✅ Flask keep-alive started on port " + os.environ.get('PORT', '5000'))
+
+    # Build PTB application
+    application = Application.builder().token(BOT_TOKEN).build()
 
     # Command handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CommandHandler("status", status_cmd))
-    app.add_handler(CommandHandler("addsudo", add_sudo))
-    app.add_handler(CommandHandler("rmsudo", rm_sudo))
-    app.add_handler(CommandHandler("sudolist", sudo_list))
-    app.add_handler(CommandHandler("grouplist", grouplist))
-    app.add_handler(CommandHandler("broadcast", broadcast))
-    app.add_handler(CommandHandler("getlink", sn_tools))
-    app.add_handler(CommandHandler("gmsg", sn_tools))
-    app.add_handler(CommandHandler("unpin", sn_tools))
-    app.add_handler(CommandHandler("nsfw", nsfw_toggle))
-    app.add_handler(CommandHandler("addpack", add_pack))
-    app.add_handler(CommandHandler("rmpack", rm_pack))
-    app.add_handler(CommandHandler("stickerlist", sticker_list))
-    app.add_handler(CommandHandler("addword", add_word))
-    app.add_handler(CommandHandler("rmword", rm_word))
-    app.add_handler(CommandHandler("wordlist", word_list))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_cmd))
+    application.add_handler(CommandHandler("status", status_cmd))
+    application.add_handler(CommandHandler("addsudo", add_sudo))
+    application.add_handler(CommandHandler("rmsudo", rm_sudo))
+    application.add_handler(CommandHandler("sudolist", sudo_list))
+    application.add_handler(CommandHandler("nsfw", nsfw_toggle))
+    application.add_handler(CommandHandler("addpack", add_pack))
+    application.add_handler(CommandHandler("rmpack", rm_pack))
+    application.add_handler(CommandHandler("stickerlist", sticker_list))
+    application.add_handler(CommandHandler("addword", add_word))
+    application.add_handler(CommandHandler("rmword", rm_word))
+    application.add_handler(CommandHandler("wordlist", word_list))
 
     # Callback handlers
-    app.add_handler(CallbackQueryHandler(del_status_callback, pattern="^del_status$"))
-    app.add_handler(CallbackQueryHandler(callback_handler))
+    application.add_handler(CallbackQueryHandler(del_status_callback, pattern="^del_status$"))
+    application.add_handler(CallbackQueryHandler(callback_handler))
 
-    # Message handler for scanning (media & text)
-    app.add_handler(MessageHandler(
+    # Message handler for scanning
+    application.add_handler(MessageHandler(
         filters.TEXT | filters.PHOTO | filters.Sticker.ALL | filters.VIDEO | filters.ANIMATION | filters.Document.IMAGE,
         master_scanner
     ))
@@ -487,9 +478,9 @@ def main():
     loop.close()
     print(f"✅ Bot started on: {time.ctime(cached_start_time)}")
 
-    # Start polling
-    print("Bot is running...")
-    app.run_polling()
+    # Start polling (this blocks)
+    print("🤖 Bot is polling...")
+    application.run_polling()
 
 if __name__ == "__main__":
     main()
