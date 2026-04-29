@@ -150,8 +150,10 @@ async def load_start_time():
     print(f"✅ Bot first started on: {time.ctime(cached_start_time)}")
 
 # Schedule the startup task to run in background
-asyncio.get_event_loop().create_task(load_start_time())
-    
+#asyncio.get_event_loop().create_task(load_start_time())
+
+asyncio.create_task(load_start_time())
+
 # ================= COMMANDS =================
 
 # ================= BUTTONS CONFIGURATION (No Support) =================
