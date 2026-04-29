@@ -236,25 +236,20 @@ async def status_cmd(client, message):
     global cached_start_time
     if cached_start_time is None:
         cached_start_time = await get_or_create_start_time()
-    
+
     uptime_seconds = int(time.time() - cached_start_time)
-    hours = uptime_seconds / 3600
-    hours_rounded = round(hours, 1)
-    
-    if hours >= 24:
-        days = int(hours // 24)
-        rem_hours = hours % 24
-        uptime_str = f"{days} days, {rem_hours:.1f} hours"
-    else:
-        uptime_str = f"{hours_rounded} hours"
-    
+    hours = uptime_seconds // 3600
+    minutes = (uptime_seconds % 3600) // 60
+
+    uptime_str = f"{hours}h {minutes}m"
+
     stats = await get_stats()
-    
-    # ✅ FIX: manually count groups
+
     groups_count = 0
-    async for _ in client.get_dialogs():
-        groups_count += 1
-    
+    async for dialog in client.get_dialogs():
+        if dialog.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
+            groups_count += 1
+
     status_text = (
         "📊 **Bot Operational Status**\n\n"
         f"⏱️ **Total Uptime:** `{uptime_str}`\n"
@@ -263,8 +258,10 @@ async def status_cmd(client, message):
         f"🚫 **NSFW Blocked:** `{stats.get('nsfw_blocked', 0)}`\n"
         f"🤬 **Abuse Blocked:** `{stats.get('abuse_blocked', 0)}`"
     )
-    
-    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🗑️ Delete Status", callback_data="del_status")]])
+
+    reply_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗑️ Delete", callback_data="del_status")]
+    ])
     await message.reply_text(status_text, reply_markup=reply_markup)
     
 # --- SUDO MANAGEMENT COMMANDS (Sirf Owner) ---
@@ -314,36 +311,43 @@ async def sudo_list_cmd(client, message):
     text = "👑 **Sudo Admins List:**\n" + "\n".join(f"• `{uid}`" for uid in sudos)
     await message.reply_text(text)
 
+# --- OWNER TOOLS: Grouplist ---
 @app.on_message(filters.command("grouplist") & filters.user(OWNER_ID))
 async def grouplist_cmd(client, message):
     global temp_group_list
+    temp_group_list = {}  # Reset before repopulating
     text = "📋 **Active Groups (S.No):**\n\n"
     curr = 1
     async for dialog in client.get_dialogs():
         if dialog.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
-            temp_group_list[curr] = dialog.chat.id # S.No save ho raha hai
+            temp_group_list[curr] = dialog.chat.id
             text += f"{curr}. **{dialog.chat.title}** (`{dialog.chat.id}`)\n"
             curr += 1
-    await message.reply_text(text or "📭 No groups found.")
+    if curr == 1:
+        await message.reply_text("📭 No groups found.")
+    else:
+        await message.reply_text(text)
 
+# --- OWNER TOOLS: Broadcast ---
 @app.on_message(filters.command("broadcast") & filters.user(OWNER_ID))
 async def broadcast_handler(client, message):
     args = message.command
     is_pin = "pin" in args
     is_unpin = "unpin" in args
-    
+
     if is_unpin:
         sent = 0
         async for dialog in client.get_dialogs():
-            try: 
+            try:
                 await client.unpin_all_chat_messages(dialog.chat.id)
                 sent += 1
-            except: pass
+            except:
+                pass
         return await message.reply_text(f"✅ Unpinned messages in `{sent}` groups.")
 
     status = await message.reply_text("⏳ Broadcasting...")
     msg_to_copy = message.reply_to_message if message.reply_to_message else message
-    
+
     count = 0
     async for dialog in client.get_dialogs():
         try:
@@ -351,44 +355,59 @@ async def broadcast_handler(client, message):
             if is_pin:
                 await client.pin_chat_message(dialog.chat.id, m.id, disable_notification=True)
             count += 1
-            await asyncio.sleep(0.3) # Protection
-        except: pass
+            await asyncio.sleep(0.3)
+        except:
+            pass
     await status.edit_text(f"📢 Sent to `{count}` chats.")
 
-@app.on_message(filters.command(["nsfw", "getlink", "unpin", "gmsg"]) & filters.user(OWNER_ID))
-async def owner_tools(client, message):
+# --- OWNER TOOLS: getlink, gmsg, unpin (SN based) ---
+@app.on_message(filters.command(["getlink", "gmsg", "unpin"]) & filters.user(OWNER_ID))
+async def owner_sn_tools(client, message):
     cmd = message.command[0].lower()
-    
-    # NSFW toggle - kisi bhi group mein (current group)
-    if cmd == "nsfw" and message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
-        args = message.command[1:]
-        if not args or args[0].lower() not in ["on", "off"]:
-            return await message.reply_text("❗ Usage: `/nsfw on` or `/nsfw off` (is group mein)")
-        new_status = args[0].lower() == "on"
-        await set_nsfw_status(message.chat.id, new_status)
-        return await message.reply_text(f"✅ NSFW filter in **{message.chat.title}** is now **{'ON' if new_status else 'OFF'}**")
-    
-    # Baaki commands (getlink, unpin, gmsg) pehle jaise the...
-    # (Serial Number wala logic same rakho)
     args = message.command
-    if len(args) < 2: return
-    sn = int(args[1]) if args[1].isdigit() else None
-    chat_id = temp_group_list.get(sn) if sn else None
+
+    if len(args) < 2:
+        return await message.reply_text(
+            f"❗ Usage: `/{cmd} <S.No>` — Pehle /grouplist chalao S.No ke liye."
+        )
+
+    sn_str = args[1]
+    if not sn_str.isdigit():
+        return await message.reply_text("❌ S.No ek number hona chahiye.")
+
+    sn = int(sn_str)
+
+    if not temp_group_list:
+        return await message.reply_text("❌ temp_group_list khaali hai. Pehle /grouplist chalao.")
+
+    chat_id = temp_group_list.get(sn)
     if not chat_id:
-        return await message.reply_text("❌ SN not found. Pehle /grouplist chalao.")
-    
+        return await message.reply_text(f"❌ S.No `{sn}` nahi mila. Pehle /grouplist chalao.")
+
     if cmd == "getlink":
-        link = await client.export_chat_invite_link(chat_id)
-        await message.reply_text(f"🔗 Link: {link}")
+        try:
+            link = await client.export_chat_invite_link(chat_id)
+            await message.reply_text(f"🔗 Invite Link:\n{link}")
+        except Exception as e:
+            await message.reply_text(f"❌ Link generate nahi hua: {e}")
+
     elif cmd == "unpin":
-        await client.unpin_all_chat_messages(chat_id)
-        await message.reply_text(f"✅ Unpinned group {sn}")
+        try:
+            await client.unpin_all_chat_messages(chat_id)
+            await message.reply_text(f"✅ Group `{sn}` ke messages unpin ho gaye.")
+        except Exception as e:
+            await message.reply_text(f"❌ Unpin nahi hua: {e}")
+
     elif cmd == "gmsg":
-        if len(args) < 3: return
+        if len(args) < 3:
+            return await message.reply_text("❗ Usage: `/gmsg <S.No> <message text>`")
         text = " ".join(args[2:])
-        await client.send_message(chat_id, text)
-        await message.reply_text("✅ Message sent.")
-        
+        try:
+            await client.send_message(chat_id, text)
+            await message.reply_text("✅ Message send ho gaya.")
+        except Exception as e:
+            await message.reply_text(f"❌ Message nahi gaya: {e}")
+            
 # --- NSFW TOGGLE COMMAND (Group Admins & Owner) ---
 @app.on_message(filters.command("nsfw") & filters.group)
 async def nsfw_toggle_cmd(client, message):
@@ -511,6 +530,13 @@ async def list_word_cmd(client, message):
 
 
 # ================= CALLBACK HANDLERS =================
+# ✅ PEHLE yeh (specific)
+@app.on_callback_query(filters.regex("^del_status$"))
+async def del_status_callback(client, callback_query: CallbackQuery):
+    try:
+        await callback_query.message.delete()
+    except:
+        await callback_query.answer("Already deleted!", show_alert=False)
 
 @app.on_callback_query()
 async def callback_handler(client, query: CallbackQuery):
@@ -528,10 +554,7 @@ async def callback_handler(client, query: CallbackQuery):
     elif query.data == "close_status":
         await query.message.delete()
 
-@app.on_callback_query(filters.regex("del_status"))
-async def del_status_callback(client, callback_query: CallbackQuery):
-    await callback_query.message.delete()
-    
+
 # ================= MASTER SCANNER (Updated with Permission Checks) =================
 
 @app.on_message((filters.text | filters.photo | filters.sticker | filters.video | filters.animation | filters.document) & ~filters.service)
@@ -665,12 +688,15 @@ async def master_scanner(client, message):
 # ================= EXECUTION =================
 if __name__ == "__main__":
     print(f"🤖 Starting {BOT_DISPLAY_NAME}...")
-    
-    # 🟢 Server ko background mein start karein
-    keep_alive() 
-
+    keep_alive()
     print("✨ Health check server is running. Starting bot polling...")
 
-    # 🟢 Finally, start the bot
-    app.run()
+    async def main():
+        async with app:
+            global cached_start_time
+            cached_start_time = await get_or_create_start_time()
+            print(f"✅ Uptime loaded: {time.ctime(cached_start_time)}")
+            await asyncio.get_event_loop().create_future()
+
+    asyncio.run(main())
     
