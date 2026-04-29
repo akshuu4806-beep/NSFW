@@ -6,11 +6,11 @@ import requests
 import json
 
 # ----- FIX for Python 3.14 event loop issue -----
-if sys.version_info >= (3, 10):
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        asyncio.set_event_loop(asyncio.new_event_loop())
+#if sys.version_info >= (3, 10):
+    #try:
+        #asyncio.get_running_loop()
+    #except RuntimeError:
+        #asyncio.set_event_loop(asyncio.new_event_loop())
 # ------------------------------------------------
 
 from pyrogram import Client, filters, enums
@@ -692,11 +692,13 @@ if __name__ == "__main__":
     print("✨ Health check server is running. Starting bot polling...")
 
     async def main():
+        global cached_start_time
         async with app:
-            global cached_start_time
             cached_start_time = await get_or_create_start_time()
             print(f"✅ Uptime loaded: {time.ctime(cached_start_time)}")
-            await asyncio.get_event_loop().create_future()
+            await asyncio.get_event_loop().create_future()  # run forever
 
-    asyncio.run(main())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(main())
     
