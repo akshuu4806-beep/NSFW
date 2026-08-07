@@ -31,17 +31,17 @@ from telegram.ext import (
 )
 
 # ===================== CONFIGURATION =====================
-TOKEN = os.environ.get("")
-MONGO_URL = os.environ.get(".")
-admin_env = os.environ.get(".")
+TOKEN = os.environ.get("TOKEN")
+MONGO_URL = os.environ.get("MONGO_URL")
+admin_env = os.environ.get("ADMIN_IDS", "")
 ADMIN_IDS = [int(x.strip()) for x in admin_env.split(",") if x.strip().isdigit()]
 IST = pytz.timezone('Asia/Kolkata')
-
-# Sightengine API keys (set in environment)
+# Sightengine Multiple API Keys Setup
+# Add your keys in Render Environment Variables as SE_USER_1, SE_SECRET_1, etc.
 SIGHTENGINE_KEYS = [
-    {"user": "1263088480", "secret": "Cu9GYpvw5hqauXGr9niPrswzbh35mbqK"},
-    {"user": "1263088481", "secret": "Cu9GYpvw5hqauXGr9niPrswzbh35mbqL"},
-    {"user": "1263088482", "secret": "Cu9GYpvw5hqauXGr9niPrswzbh35mbqM"}
+    {"user": os.environ.get("SE_USER_1"), "secret": os.environ.get("SE_SECRET_1")},
+    {"user": os.environ.get("SE_USER_2"), "secret": os.environ.get("SE_SECRET_2")},
+    {"user": os.environ.get("SE_USER_3"), "secret": os.environ.get("SE_SECRET_3")}
 ]
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
